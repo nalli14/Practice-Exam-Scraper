@@ -9,6 +9,7 @@ On Azure App Service (Linux, Python), gunicorn finds `app` in app.py on its own.
 
 import datetime as dt
 import json
+import os
 from pathlib import Path
 
 from flask import Flask, jsonify, request
@@ -22,6 +23,34 @@ app = Flask(__name__, static_folder="static", static_url_path="/static")
 # A saved results page is about 1 MB; leave plenty of room but refuse anything silly.
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024
 app.json.sort_keys = False
+
+
+def allowed_users():
+    """Accounts allowed in, from ALLOWED_USERS (comma-separated, any case).
+
+    App Service authentication decides how people sign in, but an identity
+    provider like GitHub lets any account sign in, so the allow-list is checked
+    here. Unset means no check, for local development.
+    """
+    return {u.strip().lower() for u in os.environ.get("ALLOWED_USERS", "").split(",") if u.strip()}
+
+
+@app.before_request
+def check_user():
+    allowed = allowed_users()
+    if not allowed or request.path == "/healthz":
+        return None
+    # App Service sets these headers after signing someone in and strips any copy
+    # sent by the browser, so they can be trusted while authentication is on.
+    name = (request.headers.get("X-MS-CLIENT-PRINCIPAL-NAME") or "").lower()
+    if request.headers.get("X-MS-CLIENT-PRINCIPAL-IDP") and name in allowed:
+        return None
+    if request.path.startswith("/api/"):
+        return error("This account doesn't have access to this site.", 403)
+    return (f"<!doctype html><meta charset=utf-8><title>No access</title>"
+            f"<p style='font-family:system-ui;margin:40px'>This account doesn't have access "
+            f"to this site. <a href='/.auth/logout'>Sign out</a> and sign in with another "
+            f"account.</p>", 403)
 
 
 @app.get("/")

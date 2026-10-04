@@ -33,21 +33,28 @@ Separately, [.github/workflows/tests.yml](.github/workflows/tests.yml) runs the 
 
 ### Restricting the site to your account
 
-App Service authentication signs people in before any request reaches the app, so the app itself has no login code. It only shows who's signed in, with a sign-out link, using the name App Service passes it.
+App Service authentication signs people in with GitHub before any request reaches the app. GitHub lets any GitHub account sign in, so the app also checks the signed-in name against the `ALLOWED_USERS` app setting and turns everyone else away, from the page and every `/api/` endpoint alike. The footer shows who's signed in, with a sign-out link.
 
-1. **Turn on sign-in.** In the web app, open **Settings > Authentication > Add identity provider** and choose **Microsoft**:
-   - **App registration type:** Create new app registration.
-   - **Supported account types:** Current tenant - Single tenant.
+Do these in order. The app trusts the sign-in name only because App Service sets it, so turn sign-in on before setting `ALLOWED_USERS`.
+
+1. **Create a GitHub OAuth app.** On GitHub, open **Settings > Developer settings > OAuth Apps > New OAuth App**:
+   - **Homepage URL:** `https://<default-domain>`, the web app's default domain from its **Overview** page.
+   - **Authorization callback URL:** `https://<default-domain>/.auth/login/github/callback`
+
+   Register it, then choose **Generate a new client secret** and copy it. GitHub shows it only once.
+2. **Turn on sign-in.** In the web app, open **Settings > Authentication > Add identity provider** and choose **GitHub**:
+   - Paste the OAuth app's **Client ID** and **client secret**.
    - **Restrict access:** Require authentication.
    - **Unauthenticated requests:** HTTP 302 Found redirect.
 
-   Then choose **Add**.
-2. **Allow only your account.** In **Microsoft Entra ID > Enterprise applications**, open the app registration the last step created, which has the same name as the web app:
-   - Under **Properties**, set **Assignment required?** to **Yes** and save.
-   - Under **Users and groups**, choose **Add user/group** and assign your own account.
-3. **Check it.** Open the site in a private window. It should ask you to sign in and then work. Any other account is stopped with an Entra error (`AADSTS50105`) saying it isn't assigned to the app.
+   Then choose **Add**. App Service keeps the client secret in an app setting it creates for itself.
+3. **Find your sign-in name.** Open the site, sign in with GitHub, and note the name in the footer after "Signed in as". For GitHub it's your username.
+4. **Allow only that name.** In **Settings > Environment variables**, add `ALLOWED_USERS` with that name and apply. To allow more than one account, separate names with commas; case doesn't matter.
+5. **Check it.** Sign out using the footer link, then sign in with a different GitHub account, or ask someone to try. They should get "This account doesn't have access to this site."
 
-Every path needs a sign-in, `/healthz` included.
+Every path needs a sign-in, `/healthz` included. With `ALLOWED_USERS` unset, any signed-in account gets in, which is also how the app runs locally.
+
+On a subscription that allows Entra app registrations, the **Microsoft** provider with **Assignment required** on its enterprise app can restrict sign-in at the Entra level instead. `ALLOWED_USERS` works with that provider too.
 
 ### Anthropic API key in Key Vault
 

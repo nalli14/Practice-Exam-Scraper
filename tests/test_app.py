@@ -107,6 +107,18 @@ class AppTests(unittest.TestCase):
         res = self.client.get("/api/me", headers={"X-MS-CLIENT-PRINCIPAL-NAME": "me@example.com"})
         self.assertEqual(res.get_json(), {"name": "me@example.com"})
 
+    @mock.patch.dict(os.environ, {"ALLOWED_USERS": "Nalli14, other@example.com"})
+    def test_allow_list(self):
+        signed_in = lambda name: {"X-MS-CLIENT-PRINCIPAL-NAME": name, "X-MS-CLIENT-PRINCIPAL-IDP": "github"}
+        with self.client.get("/", headers=signed_in("nalli14")) as res:
+            self.assertEqual(res.status_code, 200)
+        self.assertEqual(self.client.get("/", headers=signed_in("someone-else")).status_code, 403)
+        self.assertEqual(self.client.get("/api/me", headers=signed_in("someone-else")).status_code, 403)
+        # Not signed in at all, or a name without App Service's provider header.
+        self.assertEqual(self.client.get("/").status_code, 403)
+        self.assertEqual(self.client.get("/", headers={"X-MS-CLIENT-PRINCIPAL-NAME": "nalli14"}).status_code, 403)
+        self.assertEqual(self.client.get("/healthz").status_code, 200)
+
     def test_parse_returns_file(self):
         res = self.post(SAMPLE_TXT, attempt="retake", date="2026-10-04")
         self.assertEqual(res.status_code, 200)
