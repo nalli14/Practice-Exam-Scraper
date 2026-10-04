@@ -1,0 +1,58 @@
+# Tests every push and pull request; deploys main to the Azure web app.
+#
+# Deploying needs, in the GitHub repo settings (Secrets and variables > Actions):
+#   variable AZURE_WEBAPP_NAME             the web app's name
+#   secret   AZURE_WEBAPP_PUBLISH_PROFILE  the web app's publish profile (the downloaded XML)
+# Until the variable is set, the deploy job is skipped and only the tests run.
+
+name: Test and deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python -m unittest -v
+
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && vars.AZURE_WEBAPP_NAME != ''
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ steps.deploy.outputs.webapp-url }}
+    concurrency: deploy-production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Leave out files the app doesn't need
+        run: rm -rf .git .github tests
+      # App Service installs requirements.txt itself (SCM_DO_BUILD_DURING_DEPLOYMENT=true),
+      # so the source is deployed as-is.
+      - id: deploy
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ vars.AZURE_WEBAPP_NAME }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: .
+      - name: Check the app responds
+        run: |
+          url="${{ steps.deploy.outputs.webapp-url }}/healthz"
+          for i in $(seq 1 12); do
+            if curl -fsS "$url"; then exit 0; fi
+            echo "not ready yet, retrying in 10s"; sleep 10
+          done
+          echo "::error::$url did not respond after 2 minutes"; exit 1
