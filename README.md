@@ -23,20 +23,9 @@ Then open http://127.0.0.1:5000.
 
 The app runs on a Linux App Service web app with a Python runtime stack, deployed as code. App Service installs `requirements.txt` during the deployment and starts `app.py` with gunicorn on its own, so no startup command is needed.
 
-Deployment runs from GitHub Actions ([.github/workflows/deploy.yml](.github/workflows/deploy.yml)). Every push and pull request runs the tests, and a push to `main` that passes them deploys to the web app, then checks `/healthz`.
+Deployment is set up from the web app's **Deployment Center** in the Azure portal, with GitHub as the source. Deployment Center adds its own workflow to `.github/workflows/`, and every push to `main` deploys.
 
-One-time setup:
-
-1. **Turn on the build during deployment.** In the web app, go to **Settings > Environment variables** and add `SCM_DO_BUILD_DURING_DEPLOYMENT` with the value `true`.
-2. **Allow publish profile deploys.** In **Settings > Configuration > General settings**, turn on **SCM Basic Auth Publishing Credentials** and save. New web apps have it off, and a publish profile doesn't work without it.
-3. **Download the publish profile** from the web app's **Overview** page (**Download publish profile**).
-4. **Add it to GitHub.** In the repo, go to **Settings > Secrets and variables > Actions**:
-   - On the **Secrets** tab, add `AZURE_WEBAPP_PUBLISH_PROFILE` and paste the whole downloaded file.
-   - On the **Variables** tab, add `AZURE_WEBAPP_NAME` with the web app's name.
-
-Until `AZURE_WEBAPP_NAME` is set, the workflow only runs the tests. To deploy without pushing, run the workflow by hand from the **Actions** tab.
-
-The publish profile is a password for deploying to the app. If it leaks, reset it from the web app's **Overview** page (**Reset publish profile**) and update the secret.
+Separately, [.github/workflows/tests.yml](.github/workflows/tests.yml) runs the tests on every push and pull request. It doesn't block a deploy, so check the **Actions** tab if a deploy goes out with failing tests.
 
 ### Tests
 
