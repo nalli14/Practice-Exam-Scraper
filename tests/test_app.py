@@ -105,7 +105,8 @@ class AppTests(unittest.TestCase):
 
     def test_signed_in_user(self):
         self.assertEqual(self.client.get("/api/me").get_json(), {"name": None})
-        res = self.client.get("/api/me", headers={"X-MS-CLIENT-PRINCIPAL-NAME": "me@example.com"})
+        res = self.client.get("/api/me", headers={"X-MS-CLIENT-PRINCIPAL-NAME": "me@example.com",
+                                                  "X-MS-CLIENT-PRINCIPAL-IDP": "aad"})
         self.assertEqual(res.get_json(), {"name": "me@example.com"})
 
     @mock.patch.dict(os.environ, {"ALLOWED_USERS": "Nalli14, other@example.com"})
@@ -126,11 +127,21 @@ class AppTests(unittest.TestCase):
         principal = base64.b64encode(json.dumps({"claims": [
             {"typ": "urn:github:id", "val": "179412021"},
             {"typ": "urn:github:login", "val": "nalli14"}]}).encode()).decode()
-        headers = {"X-MS-CLIENT-PRINCIPAL-NAME": "179412021", "X-MS-CLIENT-PRINCIPAL-IDP": "github",
-                   "X-MS-CLIENT-PRINCIPAL": principal}
+        # As App Service sends a GitHub sign-in: the principal name is empty.
+        headers = {"X-MS-CLIENT-PRINCIPAL-NAME": "", "X-MS-CLIENT-PRINCIPAL-ID": "179412021",
+                   "X-MS-CLIENT-PRINCIPAL-IDP": "github", "X-MS-CLIENT-PRINCIPAL": principal}
         self.assertEqual(self.client.get("/api/me", headers=headers).get_json(), {"name": "nalli14"})
         with mock.patch.dict(os.environ, {"ALLOWED_USERS": "179412021"}):
             with self.client.get("/", headers=headers) as res:
+                self.assertEqual(res.status_code, 200)
+        # Without the principal ID header, the ID comes from the claims.
+        claims_only = {k: v for k, v in headers.items() if k != "X-MS-CLIENT-PRINCIPAL-ID"}
+        principal_with_id = base64.b64encode(json.dumps({"claims": [
+            {"typ": "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier", "val": "179412021"},
+            {"typ": "urn:github:login", "val": "nalli14"}]}).encode()).decode()
+        claims_only["X-MS-CLIENT-PRINCIPAL"] = principal_with_id
+        with mock.patch.dict(os.environ, {"ALLOWED_USERS": "179412021"}):
+            with self.client.get("/", headers=claims_only) as res:
                 self.assertEqual(res.status_code, 200)
         # The allow-list goes by ID, not the login name.
         with mock.patch.dict(os.environ, {"ALLOWED_USERS": "nalli14"}):

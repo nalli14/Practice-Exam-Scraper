@@ -33,9 +33,9 @@ Separately, [.github/workflows/tests.yml](.github/workflows/tests.yml) runs the 
 
 ### Restricting the site to your account
 
-App Service authentication signs people in with GitHub before any request reaches the app. GitHub lets any GitHub account sign in, so the app also checks the signed-in name against the `ALLOWED_USERS` app setting and turns everyone else away, from the page and every `/api/` endpoint alike. The footer shows who's signed in, with a sign-out link.
+App Service authentication signs people in with GitHub before any request reaches the app. GitHub lets any GitHub account sign in, so the app also checks the signed-in account's ID against the `ALLOWED_USERS` app setting and turns everyone else away, from the page and every `/api/` endpoint alike. The footer shows who's signed in, with a sign-out link.
 
-Do these in order. The app trusts the sign-in name only because App Service sets it, so turn sign-in on before setting `ALLOWED_USERS`.
+Do these in order. The app trusts the account ID only because App Service sets it, so turn sign-in on before setting `ALLOWED_USERS`.
 
 1. **Create a GitHub OAuth app.** On GitHub, open **Settings > Developer settings > OAuth Apps > New OAuth App**:
    - **Homepage URL:** `https://<default-domain>`, the web app's default domain from its **Overview** page.

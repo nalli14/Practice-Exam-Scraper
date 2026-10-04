@@ -43,19 +43,19 @@ def check_user():
     allowed = allowed_users()
     if not allowed or request.path == "/healthz":
         return None
-    # App Service sets these headers after signing someone in and strips any copy
-    # sent by the browser, so they can be trusted while authentication is on.
-    name = request.headers.get("X-MS-CLIENT-PRINCIPAL-NAME") or ""
-    if request.headers.get("X-MS-CLIENT-PRINCIPAL-IDP") and name.lower() in allowed:
+    user = signed_in_user()
+    if user and {v.lower() for v in (user["id"], user["name"]) if v} & allowed:
         return None
     if request.path.startswith("/api/"):
         return error("This account doesn't have access to this site.", 403)
-    shown = display_name()
-    who = f" ({html.escape(shown)}, ID {html.escape(name)})" if shown and shown != name \
-        else f" ({html.escape(name)})" if name else ""
+    who = ""
+    if user:
+        shown = user["display"] or user["name"]
+        who = f" ({html.escape(shown)}, ID {html.escape(user['id'])})" if shown and user["id"] \
+            else f" ({html.escape(shown or user['id'])})"
     return (f"<!doctype html><meta charset=utf-8><title>No access</title>"
             f"<p style='font-family:system-ui;margin:40px'>This account{who} doesn't have "
-            f"access to this site. To allow it, add that name to the ALLOWED_USERS app "
+            f"access to this site. To allow it, add its ID to the ALLOWED_USERS app "
             f"setting, or <a href='/.auth/logout'>sign out</a> and sign in with another "
             f"account.</p>", 403)
 
@@ -70,20 +70,32 @@ def healthz():
     return {"status": "ok"}
 
 
-# Claims that hold a readable account name, by identity provider. The principal
-# name App Service passes for GitHub is the numeric user ID.
+# Claims that hold a readable account name, by identity provider.
 DISPLAY_NAME_CLAIMS = ("urn:github:login", "name", "preferred_username")
+ID_CLAIM = "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier"
 
 
-def display_name():
-    """A readable name for whoever is signed in, or None when App Service auth is off."""
-    name = request.headers.get("X-MS-CLIENT-PRINCIPAL-NAME")
+def signed_in_user():
+    """Who's signed in, from the headers App Service adds; None when its auth is off.
+
+    Returns {"id", "name", "display"}. With GitHub, App Service leaves the principal
+    name empty and the ID is the numeric GitHub user ID, so the ID comes from the
+    principal ID header (or the claims) and the readable name from the claims.
+    App Service sets these headers itself and strips any copy sent by the browser.
+    """
+    if not request.headers.get("X-MS-CLIENT-PRINCIPAL-IDP"):
+        return None
     try:
         principal = json.loads(base64.b64decode(request.headers.get("X-MS-CLIENT-PRINCIPAL", "")))
         claims = {c["typ"]: c["val"] for c in principal.get("claims", [])}
     except (ValueError, binascii.Error, TypeError, KeyError, AttributeError):
         claims = {}
-    return next((claims[c] for c in DISPLAY_NAME_CLAIMS if claims.get(c)), name)
+    name = request.headers.get("X-MS-CLIENT-PRINCIPAL-NAME") or ""
+    return {
+        "id": request.headers.get("X-MS-CLIENT-PRINCIPAL-ID") or claims.get(ID_CLAIM) or "",
+        "name": name,
+        "display": next((claims[c] for c in DISPLAY_NAME_CLAIMS if claims.get(c)), name),
+    }
 
 
 @app.get("/api/me")
@@ -92,7 +104,8 @@ def me():
 
     App Service sets these headers itself and strips any copy sent by the browser.
     """
-    return {"name": display_name()}
+    user = signed_in_user()
+    return {"name": (user["display"] or user["id"]) if user else None}
 
 
 @app.post("/api/parse")
