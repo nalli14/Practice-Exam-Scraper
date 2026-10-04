@@ -402,11 +402,19 @@ def is_learndash(root):
 
 
 def learndash_answers(item, qtype):
-    """(your_answer, correct_answer) lists for one wpProQuiz_listItem.
+    """(your_answer, correct_answer, gaps) for one wpProQuiz_listItem.
 
-    An answer the page doesn't record comes back as None in the list.
+    An answer the page doesn't record comes back as None in the list, and gaps
+    describes each one so it can be filled in by hand: which list and index, the
+    prompt it belongs to, and the choices the question offered.
     """
-    yours, correct = [], []
+    yours, correct, gaps = [], [], []
+
+    def gap(field, prompt, choices):
+        index = len(yours if field == "your_answer" else correct)
+        gaps.append({"field": field, "index": index, "prompt": prompt, "choices": choices})
+        return None
+
     if qtype in ("single", "multiple"):
         for opt in find_class(item, "wpProQuiz_questionListItem"):
             label = next((n for n in find_all(opt, lambda n: n.tag == "label")), None)
@@ -423,8 +431,10 @@ def learndash_answers(item, qtype):
             right = first_class(row, "hotspot_question_correct")
             picked = [n for n in find_class(row, "checked")]
             picked_input = find_all(picked[0], lambda n: n.tag == "input") if picked else []
-            yours.append(f"{stmt}: {picked_input[0].attrs.get('value')}" if picked_input else None)
-            correct.append(f"{stmt}: {right.attrs.get('value')}" if right is not None else None)
+            yours.append(f"{stmt}: {picked_input[0].attrs.get('value')}" if picked_input
+                         else gap("your_answer", stmt, ["Yes", "No"]))
+            correct.append(f"{stmt}: {right.attrs.get('value')}" if right is not None
+                           else gap("correct_answer", stmt, ["Yes", "No"]))
     elif qtype == "laq_jumbled_sentence":
         # Dropdown blanks. A saved page keeps the correct value but not your choice,
         # so a blank you got wrong has no recorded answer.
@@ -445,17 +455,21 @@ def learndash_answers(item, qtype):
             right = next((n.attrs.get("value") for n in siblings[i + 1:]
                           if isinstance(n, Node) and "laq_jumbled_sentence_correct" in classes(n)), None)
             got_it = "wpProQuiz_answerCorrect" in classes(sel)
+            choices = [o.attrs["value"].strip() for o in find_all(sel, lambda n: n.tag == "option")
+                       if (o.attrs.get("value") or "").strip()]
             correct.append(f"{prompt}: {right}")
-            yours.append(f"{prompt}: {right}" if got_it else None)
+            yours.append(f"{prompt}: {right}" if got_it else gap("your_answer", prompt, choices))
     elif qtype == "matrix_sort_answer":
         # Drag-to-match rows. Only your placement is saved; for a row you got
         # wrong, the right match isn't in the page.
+        choices = list(dict.fromkeys(text_of(n) for n in find_class(item, "wpProQuiz_sortStringItem")))
         for row in find_class(item, "wpProQuiz_questionListItem"):
             criterion = text_of(first_class(row, "wpProQuiz_maxtrixSortText"))
             placed = text_of(first_class(row, "wpProQuiz_maxtrixSortCriterion"))
             yours.append(f"{criterion}: {placed}")
-            correct.append(f"{criterion}: {placed}" if "wpProQuiz_answerCorrect" in classes(row) else None)
-    return yours, correct
+            correct.append(f"{criterion}: {placed}" if "wpProQuiz_answerCorrect" in classes(row)
+                           else gap("correct_answer", criterion, choices))
+    return yours, correct, gaps
 
 
 def learndash_explanation(item):
@@ -490,7 +504,7 @@ def parse_learndash(root):
             break
         response = first_class(item, "wpProQuiz_response")
         graded_right = first_class(response, "wpProQuiz_correct") if response is not None else None
-        yours, correct = learndash_answers(item, qtype)
+        yours, correct, gaps = learndash_answers(item, qtype)
         explanation, refs = learndash_explanation(item)
         questions.append({
             "number": number,
@@ -504,6 +518,7 @@ def parse_learndash(root):
             "objective": None,
             "explanation": explanation,
             "references": refs,
+            "_gaps": gaps,
         })
     return questions
 
@@ -615,8 +630,9 @@ class ParseError(ValueError):
 def parse_results(text, filename, date, first_attempt=None):
     """Turn a saved results page into the results dict.
 
-    Returns (result, warnings, unrecorded): warnings are problems worth showing,
-    unrecorded the question numbers whose answers the page doesn't keep.
+    Returns (result, warnings, unrecorded): warnings are problems worth showing, and
+    unrecorded maps each question number whose answers the page doesn't keep to its
+    gaps (see learndash_answers), for filling in with fill_gaps.
     """
     learndash = False
     if Path(filename).suffix.lower() in (".html", ".htm"):
@@ -644,11 +660,12 @@ def parse_results(text, filename, date, first_attempt=None):
     if numbers != list(range(1, total + 1)):
         warnings.append(f"expected questions 1-{total}, parsed {len(numbers)}: "
                         f"missing {sorted(set(range(1, total + 1)) - set(numbers))}")
-    unrecorded = []
+    unrecorded = {}
     for q in questions:
         del q["of"]
+        gaps = q.pop("_gaps", [])
         if None in q["your_answer"] or None in q["correct_answer"]:
-            unrecorded.append(q["number"])
+            unrecorded[q["number"]] = gaps
         if not q["your_answer"] or not q["correct_answer"]:
             warnings.append(f"question {q['number']} has no "
                             f"{'answer' if not q['your_answer'] else 'correct answer'} parsed")
@@ -678,6 +695,31 @@ def parse_results(text, filename, date, first_attempt=None):
         # page's percentage differs from the count of fully correct questions.
         result["score"]["points"] = points
     return result, warnings, unrecorded
+
+
+FILLED_BY_HAND = "by hand"
+
+
+def fill_gaps(result, fills):
+    """Write hand-picked answers into the null entries of a parsed result.
+
+    fills is a list of {"number", "field", "index", "prompt", "value"}. Only entries
+    that are still null are filled; each filled question gets a "filled_in" note
+    naming the lists that didn't come from the page. Returns how many were filled.
+    """
+    questions = {q["number"]: q for q in result["questions"]}
+    filled = 0
+    for f in fills:
+        q = questions.get(f.get("number"))
+        field, index, value = f.get("field"), f.get("index"), f.get("value")
+        if q is None or field not in ("your_answer", "correct_answer") or not value \
+                or not isinstance(index, int) or not 0 <= index < len(q[field]) \
+                or q[field][index] is not None:
+            raise ValueError(f"can't fill {field} {index} of question {f.get('number')}")
+        q[field][index] = f"{f['prompt']}: {value}" if f.get("prompt") else value
+        q.setdefault("filled_in", {})[field] = FILLED_BY_HAND
+        filled += 1
+    return filled
 
 
 def file_stem(result, provider=None):

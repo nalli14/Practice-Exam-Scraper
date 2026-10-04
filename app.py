@@ -13,7 +13,7 @@ from pathlib import Path
 
 from flask import Flask, jsonify, request
 
-from scrape_results import ParseError, file_stem, parse_results
+from scrape_results import ParseError, file_stem, fill_gaps, parse_results
 
 ALLOWED_SUFFIXES = {".html", ".htm", ".txt"}
 
@@ -55,14 +55,39 @@ def parse():
     except ParseError as e:
         return error(str(e), 422)
 
-    return jsonify({
+    questions = {q["number"]: q for q in result["questions"]}
+    gaps = [{
+        "number": n,
+        "type": questions[n].get("type"),
+        "question": questions[n]["question"],
+        "explanation": questions[n]["explanation"],
+        "slots": slots,
+    } for n, slots in unrecorded.items()]
+    return jsonify({**saved_file(result), "warnings": warnings,
+                    "unrecorded": list(unrecorded), "gaps": gaps, "result": result})
+
+
+@app.post("/api/fill")
+def fill():
+    """Apply hand-picked answers to a result from /api/parse and return the file again."""
+    body = request.get_json(silent=True) or {}
+    result, fills = body.get("result"), body.get("fills")
+    if not isinstance(result, dict) or not isinstance(result.get("questions"), list) \
+            or not isinstance(fills, list):
+        return error("Send the parsed result and the answers to fill in.")
+    try:
+        filled = fill_gaps(result, fills)
+    except (ValueError, KeyError, TypeError) as e:
+        return error(f"Couldn't fill in those answers: {e}.")
+    return jsonify({**saved_file(result), "filled": filled})
+
+
+def saved_file(result):
+    """The download name and the file exactly as the command-line tool writes it."""
+    return {
         "filename": f"{file_stem(result)}.json",
-        "warnings": warnings,
-        "unrecorded": unrecorded,
-        "result": result,
-        # The file exactly as the command-line tool writes it, for the browser to save.
         "file_text": json.dumps(result, indent=2, ensure_ascii=False) + "\n",
-    })
+    }
 
 
 @app.errorhandler(413)

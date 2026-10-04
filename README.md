@@ -10,6 +10,8 @@ It reads a page you've saved, rather than fetching the URL itself. That's becaus
 
 `app.py` puts the same parser behind an upload page. You choose the saved page, say whether it was a first attempt, and the JSON downloads through the browser to your usual downloads folder. The page also shows the score, domains and missed questions. Uploads are parsed in memory and never stored.
 
+**Missing answers.** Some answers aren't in a saved page: your pick on a dropdown question you got wrong, and the right match on a drag-to-match row you got wrong. When that happens, the app lists those questions with a dropdown for each gap, filled with that question's own choices. Pick each one from a screenshot of the question, or from its explanation, then download. Filled answers are marked `"filled_in": {"your_answer": "by hand"}` (or `correct_answer`). Gaps you leave as **Not filled** stay `null`.
+
 Run it locally:
 
 ```bash

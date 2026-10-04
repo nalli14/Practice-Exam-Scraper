@@ -70,6 +70,22 @@
   .saved { color: var(--muted); font-size: .95rem; }
   a { color: var(--accent); }
   footer { color: var(--muted); font-size: .85rem; }
+  h2 { font-size: 1.15rem; margin: 0 0 4px; }
+  .hint { color: var(--muted); margin: 0 0 12px; font-size: .95rem; }
+  .gap { border-top: 1px solid var(--border); padding: 14px 0 4px; }
+  .gap h3 { font-size: 1rem; margin: 0 0 6px; }
+  .gap h3 small { color: var(--muted); font-weight: 400; }
+  details { margin: 0 0 10px; font-size: .92rem; }
+  details summary { cursor: pointer; color: var(--accent); }
+  details p { white-space: pre-wrap; margin: 6px 0 0; color: var(--muted); }
+  .slot { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; margin: 0 0 12px; }
+  .slot select { width: 100%; }
+  .slot span { font-size: .95rem; }
+  .slot span b { font-weight: 600; }
+  select {
+    font: inherit; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--card); color: var(--text); max-width: 100%;
+  }
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -96,7 +112,7 @@
 
     <div class="row">
       <label>Attempt date <input type="date" id="date" name="date"></label>
-      <button type="submit" id="submit" disabled>Process and download</button>
+      <button type="submit" id="submit" disabled>Process</button>
     </div>
     <p class="error" id="error" role="alert" hidden></p>
   </form>
@@ -112,7 +128,15 @@
     </table>
     <p id="missed"></p>
     <div id="notes"></div>
-    <p class="saved">Downloaded <a id="again" href="#"></a>. Click the name to download it again.</p>
+    <p class="saved" id="saved" hidden>Downloaded <a id="again" href="#"></a>. Click the name to download it again.</p>
+  </section>
+
+  <section class="card" id="fill" hidden>
+    <h2>Fill in missing answers</h2>
+    <p class="hint">The saved page doesn't record these answers. Pick each one from a screenshot of the question, or leave it as Not filled to keep it empty (null) in the file.</p>
+    <div id="gaps"></div>
+    <div class="row"><button type="button" id="fill-download">Download JSON</button></div>
+    <p class="error" id="fill-error" role="alert" hidden></p>
   </section>
 
   <footer>Your page is processed in memory and isn't stored on the server.</footer>
@@ -121,7 +145,7 @@
 <script>
   const $ = (id) => document.getElementById(id);
   const form = $("form"), fileInput = $("file"), drop = $("drop"), submit = $("submit");
-  let lastFile = null;
+  let lastFile = null, lastParse = null;
 
   const today = new Date();
   $("date").value = [today.getFullYear(), String(today.getMonth() + 1).padStart(2, "0"),
@@ -167,14 +191,15 @@
       let data;
       try { data = await res.json(); } catch { data = {}; }
       if (!res.ok) throw new Error(data.error || `The server returned ${res.status}.`);
-      lastFile = data;
-      download(data.filename, data.file_text);
+      lastParse = data;
       render(data);
+      renderGaps(data.gaps);
+      if (!data.gaps.length) save(data);
     } catch (err) {
       showError(err.message || "Something went wrong. Try again.");
     } finally {
       submit.disabled = !fileInput.files.length;
-      submit.textContent = "Process and download";
+      submit.textContent = "Process";
     }
   });
 
@@ -183,7 +208,79 @@
     if (lastFile) download(lastFile.filename, lastFile.file_text);
   });
 
-  function render({ filename, result, warnings, unrecorded }) {
+  function save(file) {
+    lastFile = file;
+    download(file.filename, file.file_text);
+    $("again").textContent = file.filename;
+    $("saved").hidden = false;
+  }
+
+  const TYPE_NAMES = {
+    laq_jumbled_sentence: "Dropdown", matrix_sort_answer: "Drag to match",
+    laq_hotspot_question: "Yes/No grid",
+  };
+
+  function el(tag, props = {}, children = []) {
+    const node = Object.assign(document.createElement(tag), props);
+    node.append(...children);
+    return node;
+  }
+
+  function renderGaps(gaps) {
+    const box = $("gaps");
+    box.replaceChildren();
+    $("fill-error").hidden = true;
+    gaps.forEach((g) => {
+      const needsCorrect = g.slots.some((s) => s.field === "correct_answer");
+      const slots = g.slots.map((s) => {
+        const select = el("select", {}, [el("option", { value: "", textContent: "Not filled" }),
+          ...s.choices.map((c) => el("option", { value: c, textContent: c }))]);
+        Object.assign(select.dataset, { number: g.number, field: s.field, index: s.index, prompt: s.prompt });
+        const who = s.field === "your_answer" ? "Your pick" : "Correct match";
+        const prompt = g.type === "matrix_sort_answer" ? `Row ${s.prompt}` : s.prompt;
+        return el("label", { className: "slot" },
+                  [el("span", {}, [el("b", { textContent: `${who}: ` }), prompt]), select]);
+      });
+      box.append(el("div", { className: "gap" }, [
+        el("h3", {}, [`Q${g.number} `, el("small", { textContent: TYPE_NAMES[g.type] || g.type || "" })]),
+        el("details", {}, [el("summary", { textContent: "Show question" }),
+                           el("p", { textContent: g.question })]),
+        el("details", {}, [
+          el("summary", { textContent: needsCorrect ? "Explanation (usually gives the right order)" : "Show explanation" }),
+          el("p", { textContent: g.explanation })]),
+        ...slots,
+      ]));
+    });
+    $("fill").hidden = !gaps.length;
+  }
+
+  $("fill-download").addEventListener("click", async () => {
+    $("fill-error").hidden = true;
+    const fills = [...$("gaps").querySelectorAll("select")].filter((s) => s.value).map((s) => ({
+      number: Number(s.dataset.number), field: s.dataset.field,
+      index: Number(s.dataset.index), prompt: s.dataset.prompt, value: s.value,
+    }));
+    if (!fills.length) return save(lastParse);
+    const button = $("fill-download");
+    button.disabled = true;
+    try {
+      const res = await fetch("/api/fill", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ result: lastParse.result, fills }),
+      });
+      let data;
+      try { data = await res.json(); } catch { data = {}; }
+      if (!res.ok) throw new Error(data.error || `The server returned ${res.status}.`);
+      save(data);
+    } catch (err) {
+      $("fill-error").textContent = err.message || "Something went wrong. Try again.";
+      $("fill-error").hidden = false;
+    } finally {
+      button.disabled = false;
+    }
+  });
+
+  function render({ result, warnings, unrecorded }) {
     const s = result.score;
     $("pct").textContent = `${s.percent}%`;
     $("pct-label").textContent = `${s.correct} of ${s.total} questions correct`;
@@ -217,11 +314,11 @@
       const p = document.createElement("p");
       p.className = "note"; p.textContent = text; notes.appendChild(p);
     };
-    if (unrecorded.length) add(`The saved page doesn't record every answer for ${unrecorded.map((n) => "Q" + n).join(", ")}, so those entries are null. You can fill them in from a screenshot.`);
+    if (unrecorded.length) add(`The saved page doesn't record every answer for ${unrecorded.map((n) => "Q" + n).join(", ")}. Fill them in below, then download.`);
     if (result.first_attempt === null) add("First attempt wasn't recorded. Pick First attempt or Retake and process again to set it.");
     warnings.forEach((w) => add(`Warning: ${w}`));
 
-    $("again").textContent = filename;
+    $("saved").hidden = true;
     $("summary").hidden = false;
   }
 </script>
