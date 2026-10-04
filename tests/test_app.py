@@ -1,5 +1,6 @@
 """Smoke tests for the parser and the web app. Run with: python -m unittest"""
 
+import base64
 import io
 import json
 import os
@@ -120,6 +121,22 @@ class AppTests(unittest.TestCase):
         self.assertEqual(self.client.get("/").status_code, 403)
         self.assertEqual(self.client.get("/", headers={"X-MS-CLIENT-PRINCIPAL-NAME": "nalli14"}).status_code, 403)
         self.assertEqual(self.client.get("/healthz").status_code, 200)
+
+    def test_github_login_shown(self):
+        principal = base64.b64encode(json.dumps({"claims": [
+            {"typ": "urn:github:id", "val": "179412021"},
+            {"typ": "urn:github:login", "val": "nalli14"}]}).encode()).decode()
+        headers = {"X-MS-CLIENT-PRINCIPAL-NAME": "179412021", "X-MS-CLIENT-PRINCIPAL-IDP": "github",
+                   "X-MS-CLIENT-PRINCIPAL": principal}
+        self.assertEqual(self.client.get("/api/me", headers=headers).get_json(), {"name": "nalli14"})
+        with mock.patch.dict(os.environ, {"ALLOWED_USERS": "179412021"}):
+            with self.client.get("/", headers=headers) as res:
+                self.assertEqual(res.status_code, 200)
+        # The allow-list goes by ID, not the login name.
+        with mock.patch.dict(os.environ, {"ALLOWED_USERS": "nalli14"}):
+            res = self.client.get("/", headers=headers)
+            self.assertEqual(res.status_code, 403)
+            self.assertIn(b"(nalli14, ID 179412021)", res.data)
 
     def test_parse_returns_file(self):
         res = self.post(SAMPLE_TXT, attempt="retake", date="2026-10-04")

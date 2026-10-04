@@ -7,6 +7,8 @@ Run locally:  flask --app app run
 On Azure App Service (Linux, Python), gunicorn finds `app` in app.py on its own.
 """
 
+import base64
+import binascii
 import datetime as dt
 import html
 import json
@@ -48,7 +50,9 @@ def check_user():
         return None
     if request.path.startswith("/api/"):
         return error("This account doesn't have access to this site.", 403)
-    who = f" ({html.escape(name)})" if name else ""
+    shown = display_name()
+    who = f" ({html.escape(shown)}, ID {html.escape(name)})" if shown and shown != name \
+        else f" ({html.escape(name)})" if name else ""
     return (f"<!doctype html><meta charset=utf-8><title>No access</title>"
             f"<p style='font-family:system-ui;margin:40px'>This account{who} doesn't have "
             f"access to this site. To allow it, add that name to the ALLOWED_USERS app "
@@ -66,13 +70,29 @@ def healthz():
     return {"status": "ok"}
 
 
+# Claims that hold a readable account name, by identity provider. The principal
+# name App Service passes for GitHub is the numeric user ID.
+DISPLAY_NAME_CLAIMS = ("urn:github:login", "name", "preferred_username")
+
+
+def display_name():
+    """A readable name for whoever is signed in, or None when App Service auth is off."""
+    name = request.headers.get("X-MS-CLIENT-PRINCIPAL-NAME")
+    try:
+        principal = json.loads(base64.b64decode(request.headers.get("X-MS-CLIENT-PRINCIPAL", "")))
+        claims = {c["typ"]: c["val"] for c in principal.get("claims", [])}
+    except (ValueError, binascii.Error, TypeError, KeyError, AttributeError):
+        claims = {}
+    return next((claims[c] for c in DISPLAY_NAME_CLAIMS if claims.get(c)), name)
+
+
 @app.get("/api/me")
 def me():
     """Who's signed in, as App Service authentication reports it (null when it's off).
 
-    App Service sets this header itself and strips any copy sent by the browser.
+    App Service sets these headers itself and strips any copy sent by the browser.
     """
-    return {"name": request.headers.get("X-MS-CLIENT-PRINCIPAL-NAME")}
+    return {"name": display_name()}
 
 
 @app.post("/api/parse")
