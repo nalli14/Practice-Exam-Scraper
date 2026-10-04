@@ -13,6 +13,7 @@ from pathlib import Path
 
 from flask import Flask, jsonify, request
 
+import screenshot_reader
 from scrape_results import ParseError, file_stem, fill_gaps, parse_results
 
 ALLOWED_SUFFIXES = {".html", ".htm", ".txt"}
@@ -64,7 +65,42 @@ def parse():
         "slots": slots,
     } for n, slots in unrecorded.items()]
     return jsonify({**saved_file(result), "warnings": warnings,
-                    "unrecorded": list(unrecorded), "gaps": gaps, "result": result})
+                    "unrecorded": list(unrecorded), "gaps": gaps, "result": result,
+                    "screenshots": screenshot_reader.is_configured()})
+
+
+@app.post("/api/read-screenshot")
+def read_screenshot():
+    """Pick one question's missing answers from its screenshots (see screenshot_reader)."""
+    try:
+        gap = json.loads(request.form.get("gap") or "")
+        slots = gap["slots"]
+        if not slots or not all(isinstance(s.get("choices"), list) and s["choices"] for s in slots):
+            raise ValueError
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return error("Send the question's gaps along with the screenshot.")
+
+    files = request.files.getlist("screenshots")
+    if not files or not any(f.filename for f in files):
+        return error("Choose a screenshot of the question.")
+    if len(files) > screenshot_reader.MAX_IMAGES:
+        return error(f"Send at most {screenshot_reader.MAX_IMAGES} screenshots per question.")
+    images = []
+    for f in files:
+        if f.mimetype not in screenshot_reader.IMAGE_TYPES:
+            return error(f"{f.filename} isn't a PNG, JPEG, WebP or GIF image.")
+        data = f.read()
+        if len(data) > 5 * 1024 * 1024:
+            return error(f"{f.filename} is over 5 MB. Crop it to the question and try again.")
+        images.append((data, f.mimetype))
+
+    try:
+        picks = screenshot_reader.read_gaps(images, gap)
+    except screenshot_reader.ReaderUnavailable as e:
+        return error(str(e), 503)
+    except ValueError as e:
+        return error(str(e), 422)
+    return jsonify({"picks": picks})
 
 
 @app.post("/api/fill")

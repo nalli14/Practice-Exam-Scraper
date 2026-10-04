@@ -86,6 +86,16 @@
     font: inherit; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px;
     background: var(--card); color: var(--text); max-width: 100%;
   }
+  .shot {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 12px;
+    padding: 10px 12px; border: 1px dashed var(--border); border-radius: 8px;
+  }
+  .shot.over { background: var(--drop); border-color: var(--accent); }
+  .shot input { display: none; }
+  .shot .button { padding: 6px 12px; font-size: .92rem; }
+  .shot small { color: var(--muted); }
+  .shot small.bad { color: var(--bad); }
+  .shot small.good { color: var(--good); }
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -133,7 +143,7 @@
 
   <section class="card" id="fill" hidden>
     <h2>Fill in missing answers</h2>
-    <p class="hint">The saved page doesn't record these answers. Pick each one from a screenshot of the question, or leave it as Not filled to keep it empty (null) in the file.</p>
+    <p class="hint" id="fill-hint"></p>
     <div id="gaps"></div>
     <div class="row"><button type="button" id="fill-download">Download JSON</button></div>
     <p class="error" id="fill-error" role="alert" hidden></p>
@@ -193,7 +203,7 @@
       if (!res.ok) throw new Error(data.error || `The server returned ${res.status}.`);
       lastParse = data;
       render(data);
-      renderGaps(data.gaps);
+      renderGaps(data.gaps, data.screenshots);
       if (!data.gaps.length) save(data);
     } catch (err) {
       showError(err.message || "Something went wrong. Try again.");
@@ -226,7 +236,10 @@
     return node;
   }
 
-  function renderGaps(gaps) {
+  function renderGaps(gaps, screenshots) {
+    $("fill-hint").textContent = screenshots
+      ? "The saved page doesn't record these answers. Add a screenshot of each question and the answers fill in from it. Check them, change any that are wrong, then download. Anything left as Not filled stays empty (null) in the file."
+      : "The saved page doesn't record these answers. Pick each one from a screenshot of the question, or leave it as Not filled to keep it empty (null) in the file.";
     const box = $("gaps");
     box.replaceChildren();
     $("fill-error").hidden = true;
@@ -241,8 +254,10 @@
         return el("label", { className: "slot" },
                   [el("span", {}, [el("b", { textContent: `${who}: ` }), prompt]), select]);
       });
+      const selects = slots.map((label) => label.querySelector("select"));
       box.append(el("div", { className: "gap" }, [
         el("h3", {}, [`Q${g.number} `, el("small", { textContent: TYPE_NAMES[g.type] || g.type || "" })]),
+        ...(screenshots ? [screenshotPicker(g, selects)] : []),
         el("details", {}, [el("summary", { textContent: "Show question" }),
                            el("p", { textContent: g.question })]),
         el("details", {}, [
@@ -252,6 +267,49 @@
       ]));
     });
     $("fill").hidden = !gaps.length;
+  }
+
+  function screenshotPicker(gap, selects) {
+    const input = el("input", { type: "file", accept: "image/png,image/jpeg,image/webp,image/gif", multiple: true });
+    const status = el("small", { textContent: "or drop screenshots here" });
+    const zone = el("label", { className: "shot" },
+                    [input, el("span", { className: "button", textContent: "Add screenshot" }), status]);
+    const setStatus = (text, cls = "") => { status.textContent = text; status.className = cls; };
+
+    async function read(files) {
+      files = [...files].filter((f) => f.type.startsWith("image/"));
+      if (!files.length) return;
+      setStatus("Reading the screenshot…");
+      const body = new FormData();
+      body.append("gap", JSON.stringify(gap));
+      files.forEach((f) => body.append("screenshots", f));
+      try {
+        const res = await fetch("/api/read-screenshot", { method: "POST", body });
+        let data;
+        try { data = await res.json(); } catch { data = {}; }
+        if (!res.ok) throw new Error(data.error || `The server returned ${res.status}.`);
+        let found = 0;
+        selects.forEach((sel, i) => {
+          const pick = data.picks[i];
+          if (pick != null) { sel.value = pick; found++; }
+        });
+        const missing = selects.length - found;
+        if (!found) setStatus("Couldn't find these answers in the screenshot. Pick them by hand, or try a clearer screenshot.", "bad");
+        else setStatus(missing ? `Filled ${found} of ${selects.length}. Pick the rest by hand, and check the ones filled in.`
+                               : "Filled in from the screenshot. Check them before downloading.", "good");
+      } catch (err) {
+        setStatus(err.message || "Couldn't read the screenshot. Pick the answers by hand.", "bad");
+      }
+    }
+    input.addEventListener("change", () => { read(input.files); input.value = ""; });
+    ["dragenter", "dragover"].forEach((e) => zone.addEventListener(e, (ev) => {
+      ev.preventDefault(); zone.classList.add("over");
+    }));
+    ["dragleave", "drop"].forEach((e) => zone.addEventListener(e, (ev) => {
+      ev.preventDefault(); zone.classList.remove("over");
+    }));
+    zone.addEventListener("drop", (ev) => read(ev.dataTransfer.files));
+    return zone;
   }
 
   $("fill-download").addEventListener("click", async () => {

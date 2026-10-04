@@ -2,8 +2,12 @@
 
 import io
 import json
+import os
 import unittest
+from types import SimpleNamespace
+from unittest import mock
 
+import screenshot_reader
 from app import app
 from scrape_results import ParseError, file_stem, fill_gaps, parse_results
 
@@ -123,6 +127,62 @@ class AppTests(unittest.TestCase):
         self.assertEqual(self.post(SAMPLE_TXT, name="notes.pdf").status_code, 400)
         self.assertEqual(self.post(SAMPLE_TXT, date="04/10/2026").status_code, 400)
         self.assertEqual(self.post("<p>hi</p>", name="page.html").status_code, 422)
+
+
+GAP = {"number": 1, "type": "laq_jumbled_sentence", "question": "Which methods?", "explanation": "",
+       "slots": [{"field": "your_answer", "index": 0, "prompt": "Blob storage",
+                  "choices": ["API key", "Shared access signature"]},
+                 {"field": "your_answer", "index": 1, "prompt": "File storage",
+                  "choices": ["API key", "Shared access signature"]}]}
+PNG = b"\x89PNG\r\n\x1a\n fake image"
+
+
+class ScreenshotTests(unittest.TestCase):
+    def setUp(self):
+        self.client = app.test_client()
+
+    def post(self, gap=GAP, images=((PNG, "q1.png"),)):
+        data = {"gap": json.dumps(gap),
+                "screenshots": [(io.BytesIO(b), name) for b, name in images]}
+        return self.client.post("/api/read-screenshot", data=data, content_type="multipart/form-data")
+
+    @mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+    @mock.patch("screenshot_reader.anthropic.Anthropic")
+    def test_reads_picks_from_claude(self, client_cls):
+        create = client_cls.return_value.beta.messages.create
+        create.return_value = SimpleNamespace(
+            stop_reason="end_turn",
+            content=[SimpleNamespace(type="text", text=json.dumps(
+                {"slot_0": "API key", "slot_1": screenshot_reader.NOT_VISIBLE}))])
+        res = self.post()
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.get_json(), {"picks": {"0": "API key"}})
+        # The answer is constrained to the question's own choices.
+        schema = create.call_args.kwargs["output_config"]["format"]["schema"]
+        self.assertEqual(schema["properties"]["slot_0"]["enum"],
+                         ["API key", "Shared access signature", screenshot_reader.NOT_VISIBLE])
+        image = create.call_args.kwargs["messages"][0]["content"][0]
+        self.assertEqual(image["source"]["media_type"], "image/png")
+
+    @mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test-key"})
+    @mock.patch("screenshot_reader.anthropic.Anthropic")
+    def test_refusal_is_reported(self, client_cls):
+        client_cls.return_value.beta.messages.create.return_value = SimpleNamespace(
+            stop_reason="refusal", content=[])
+        self.assertEqual(self.post().status_code, 422)
+
+    @mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": ""})
+    def test_not_configured(self):
+        self.assertEqual(self.post().status_code, 503)
+        parsed = self.client.post("/api/parse", data={"page": (io.BytesIO(SAMPLE_LEARNDASH.encode()), "td.html")},
+                                  content_type="multipart/form-data").get_json()
+        self.assertIs(parsed["screenshots"], False)
+
+    def test_rejects_bad_uploads(self):
+        self.assertEqual(self.post(gap={"slots": []}).status_code, 400)
+        self.assertEqual(self.post(images=()).status_code, 400)
+        self.assertEqual(self.post(images=((b"%PDF", "q1.pdf"),)).status_code, 400)
+        self.assertEqual(self.post(images=[(PNG, f"q{i}.png") for i in range(5)]).status_code, 400)
 
 
 if __name__ == "__main__":

@@ -12,6 +12,8 @@ It reads a page you've saved, rather than fetching the URL itself. That's becaus
 
 **Missing answers.** Some answers aren't in a saved page: your pick on a dropdown question you got wrong, and the right match on a drag-to-match row you got wrong. When that happens, the app lists those questions with a dropdown for each gap, filled with that question's own choices. Pick each one from a screenshot of the question, or from its explanation, then download. Filled answers are marked `"filled_in": {"your_answer": "by hand"}` (or `correct_answer`). Gaps you leave as **Not filled** stay `null`.
 
+**Reading screenshots.** When the server has an Anthropic API key, each of those questions also gets an **Add screenshot** button. Claude (Opus 5.5) reads the screenshot and picks the matching choice for each gap, from that question's own list, so it can only answer with a choice the question offered, or leave it unfilled when the screenshot doesn't show it. The dropdowns fill in, and you check and change them before downloading. Without a key, the button doesn't appear and the dropdowns work as before. Each screenshot costs about a cent in API usage.
+
 Run it locally:
 
 ```bash
@@ -28,6 +30,19 @@ The app runs on a Linux App Service web app with a Python runtime stack, deploye
 Deployment is set up from the web app's **Deployment Center** in the Azure portal, with GitHub as the source. Deployment Center adds its own workflow to `.github/workflows/`, and every push to `main` deploys.
 
 Separately, [.github/workflows/tests.yml](.github/workflows/tests.yml) runs the tests on every push and pull request. It doesn't block a deploy, so check the **Actions** tab if a deploy goes out with failing tests.
+
+### Anthropic API key in Key Vault
+
+The screenshot reader reads `ANTHROPIC_API_KEY` from the environment. On App Service, keep the key in Key Vault and point an app setting at it:
+
+1. **Create an API key** in the [Claude Console](https://platform.claude.com/settings/keys). Set a monthly spend limit for its workspace too, since the site is public and anyone with the link can use the screenshot reader.
+2. **Create a key vault** in the web app's resource group, with the **Azure role-based access control** permission model (the default).
+3. **Add the secret.** Give your own account the **Key Vault Secrets Officer** role on the vault, then under **Objects > Secrets** add a secret named `anthropic-api-key` with the key as its value.
+4. **Give the web app an identity.** In the web app, open **Settings > Identity** and turn **System assigned** on.
+5. **Let the app read the secret.** In the key vault, open **Access control (IAM) > Add role assignment**, choose **Key Vault Secrets User**, and assign it to the web app's managed identity.
+6. **Point the app setting at the secret.** In the web app's **Settings > Environment variables**, add `ANTHROPIC_API_KEY` with the value `@Microsoft.KeyVault(VaultName=<vault-name>;SecretName=anthropic-api-key)`, then apply. The setting should show a green **Key vault Reference** status. If it's red, the role assignment from step 5 is missing or hasn't taken effect yet.
+
+The app picks up the key after the setting is saved, which restarts it. To run the reader locally, export `ANTHROPIC_API_KEY` before starting Flask.
 
 ### Tests
 
