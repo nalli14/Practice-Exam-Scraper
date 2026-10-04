@@ -31,11 +31,29 @@ Deployment is set up from the web app's **Deployment Center** in the Azure porta
 
 Separately, [.github/workflows/tests.yml](.github/workflows/tests.yml) runs the tests on every push and pull request. It doesn't block a deploy, so check the **Actions** tab if a deploy goes out with failing tests.
 
+### Restricting the site to your account
+
+App Service authentication signs people in before any request reaches the app, so the app itself has no login code. It only shows who's signed in, with a sign-out link, using the name App Service passes it.
+
+1. **Turn on sign-in.** In the web app, open **Settings > Authentication > Add identity provider** and choose **Microsoft**:
+   - **App registration type:** Create new app registration.
+   - **Supported account types:** Current tenant - Single tenant.
+   - **Restrict access:** Require authentication.
+   - **Unauthenticated requests:** HTTP 302 Found redirect.
+
+   Then choose **Add**.
+2. **Allow only your account.** In **Microsoft Entra ID > Enterprise applications**, open the app registration the last step created, which has the same name as the web app:
+   - Under **Properties**, set **Assignment required?** to **Yes** and save.
+   - Under **Users and groups**, choose **Add user/group** and assign your own account.
+3. **Check it.** Open the site in a private window. It should ask you to sign in and then work. Any other account is stopped with an Entra error (`AADSTS50105`) saying it isn't assigned to the app.
+
+Every path needs a sign-in, `/healthz` included.
+
 ### Anthropic API key in Key Vault
 
 The screenshot reader reads `ANTHROPIC_API_KEY` from the environment. On App Service, keep the key in Key Vault and point an app setting at it:
 
-1. **Create an API key** in the [Claude Console](https://platform.claude.com/settings/keys). Set a monthly spend limit for its workspace too, since the site is public and anyone with the link can use the screenshot reader.
+1. **Create an API key** in the [Claude Console](https://platform.claude.com/settings/keys). Set a monthly spend limit for its workspace too, as a backstop. If the site isn't restricted to your account (above), anyone with the link can use the screenshot reader.
 2. **Create a key vault** in the web app's resource group, with the **Azure role-based access control** permission model (the default).
 3. **Add the secret.** Give your own account the **Key Vault Secrets Officer** role on the vault, then under **Objects > Secrets** add a secret named `anthropic-api-key` with the key as its value.
 4. **Give the web app an identity.** In the web app, open **Settings > Identity** and turn **System assigned** on.

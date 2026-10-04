@@ -102,6 +102,11 @@ class AppTests(unittest.TestCase):
             self.assertEqual(res.status_code, 200)
         self.assertEqual(self.client.get("/healthz").get_json(), {"status": "ok"})
 
+    def test_signed_in_user(self):
+        self.assertEqual(self.client.get("/api/me").get_json(), {"name": None})
+        res = self.client.get("/api/me", headers={"X-MS-CLIENT-PRINCIPAL-NAME": "me@example.com"})
+        self.assertEqual(res.get_json(), {"name": "me@example.com"})
+
     def test_parse_returns_file(self):
         res = self.post(SAMPLE_TXT, attempt="retake", date="2026-10-04")
         self.assertEqual(res.status_code, 200)

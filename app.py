@@ -34,6 +34,15 @@ def healthz():
     return {"status": "ok"}
 
 
+@app.get("/api/me")
+def me():
+    """Who's signed in, as App Service authentication reports it (null when it's off).
+
+    App Service sets this header itself and strips any copy sent by the browser.
+    """
+    return {"name": request.headers.get("X-MS-CLIENT-PRINCIPAL-NAME")}
+
+
 @app.post("/api/parse")
 def parse():
     upload = request.files.get("page")

@@ -149,13 +149,19 @@
     <p class="error" id="fill-error" role="alert" hidden></p>
   </section>
 
-  <footer>Your page is processed in memory and isn't stored on the server.</footer>
+  <footer>Your page is processed in memory and isn't stored on the server.<span id="account" hidden> Signed in as <span id="account-name"></span> · <a href="/.auth/logout">Sign out</a></span></footer>
 </main>
 
 <script>
   const $ = (id) => document.getElementById(id);
   const form = $("form"), fileInput = $("file"), drop = $("drop"), submit = $("submit");
   let lastFile = null, lastParse = null;
+
+  fetch("/api/me").then((r) => r.json()).then(({ name }) => {
+    if (!name) return;
+    $("account-name").textContent = name;
+    $("account").hidden = false;
+  }).catch(() => {});
 
   const today = new Date();
   $("date").value = [today.getFullYear(), String(today.getMonth() + 1).padStart(2, "0"),
@@ -238,7 +244,7 @@
 
   function renderGaps(gaps, screenshots) {
     $("fill-hint").textContent = screenshots
-      ? "The saved page doesn't record these answers. Add a screenshot of each question and the answers fill in from it. Check them, change any that are wrong, then download. Anything left as Not filled stays empty (null) in the file."
+      ? "The saved page doesn't record these answers. Add a screenshot of each question and the answers fill in from it. Screenshots are sent to Anthropic's API to be read. Check the answers, change any that are wrong, then download. Anything left as Not filled stays empty (null) in the file."
       : "The saved page doesn't record these answers. Pick each one from a screenshot of the question, or leave it as Not filled to keep it empty (null) in the file.";
     const box = $("gaps");
     box.replaceChildren();
