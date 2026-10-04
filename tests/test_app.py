@@ -112,7 +112,9 @@ class AppTests(unittest.TestCase):
         signed_in = lambda name: {"X-MS-CLIENT-PRINCIPAL-NAME": name, "X-MS-CLIENT-PRINCIPAL-IDP": "github"}
         with self.client.get("/", headers=signed_in("nalli14")) as res:
             self.assertEqual(res.status_code, 200)
-        self.assertEqual(self.client.get("/", headers=signed_in("someone-else")).status_code, 403)
+        res = self.client.get("/", headers=signed_in("<someone-else>"))
+        self.assertEqual(res.status_code, 403)
+        self.assertIn(b"(&lt;someone-else&gt;)", res.data)
         self.assertEqual(self.client.get("/api/me", headers=signed_in("someone-else")).status_code, 403)
         # Not signed in at all, or a name without App Service's provider header.
         self.assertEqual(self.client.get("/").status_code, 403)

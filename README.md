@@ -48,8 +48,8 @@ Do these in order. The app trusts the sign-in name only because App Service sets
    - **Unauthenticated requests:** HTTP 302 Found redirect.
 
    Then choose **Add**. App Service keeps the client secret in an app setting it creates for itself.
-3. **Find your sign-in name.** Open the site, sign in with GitHub, and note the name in the footer after "Signed in as". For GitHub it's your username.
-4. **Allow only that name.** In **Settings > Environment variables**, add `ALLOWED_USERS` with that name and apply. To allow more than one account, separate names with commas; case doesn't matter.
+3. **Find your sign-in name.** Sign in, then open `https://<default-domain>/.auth/me` and note the `user_id` value. App Service answers that page itself, so it works whatever the app allows. With GitHub, it's your numeric GitHub user ID rather than your username, which suits an allow-list because it doesn't change if you rename your account. The "no access" page also shows the name you're signed in as.
+4. **Allow only that name.** In **Settings > Environment variables**, add `ALLOWED_USERS` with that value and apply. To allow more than one account, separate names with commas; case doesn't matter.
 5. **Check it.** Sign out using the footer link, then sign in with a different GitHub account, or ask someone to try. They should get "This account doesn't have access to this site."
 
 Every path needs a sign-in, `/healthz` included. With `ALLOWED_USERS` unset, any signed-in account gets in, which is also how the app runs locally.

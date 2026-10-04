@@ -8,6 +8,7 @@ On Azure App Service (Linux, Python), gunicorn finds `app` in app.py on its own.
 """
 
 import datetime as dt
+import html
 import json
 import os
 from pathlib import Path
@@ -42,14 +43,16 @@ def check_user():
         return None
     # App Service sets these headers after signing someone in and strips any copy
     # sent by the browser, so they can be trusted while authentication is on.
-    name = (request.headers.get("X-MS-CLIENT-PRINCIPAL-NAME") or "").lower()
-    if request.headers.get("X-MS-CLIENT-PRINCIPAL-IDP") and name in allowed:
+    name = request.headers.get("X-MS-CLIENT-PRINCIPAL-NAME") or ""
+    if request.headers.get("X-MS-CLIENT-PRINCIPAL-IDP") and name.lower() in allowed:
         return None
     if request.path.startswith("/api/"):
         return error("This account doesn't have access to this site.", 403)
+    who = f" ({html.escape(name)})" if name else ""
     return (f"<!doctype html><meta charset=utf-8><title>No access</title>"
-            f"<p style='font-family:system-ui;margin:40px'>This account doesn't have access "
-            f"to this site. <a href='/.auth/logout'>Sign out</a> and sign in with another "
+            f"<p style='font-family:system-ui;margin:40px'>This account{who} doesn't have "
+            f"access to this site. To allow it, add that name to the ALLOWED_USERS app "
+            f"setting, or <a href='/.auth/logout'>sign out</a> and sign in with another "
             f"account.</p>", 403)
 
 
